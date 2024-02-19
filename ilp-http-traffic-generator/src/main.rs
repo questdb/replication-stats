@@ -11,32 +11,55 @@ fn parse_duration(arg: &str) -> anyhow::Result<Duration> {
     Ok(Duration::from_nanos(nanos))
 }
 
-/// Simulate traffic to QuestDB over ILP/HTTP
+fn at_least_one(s: &str) -> Result<usize, String> {
+    let n = s.parse::<usize>().map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("cannot be zero".to_string());
+    }
+    Ok(n)
+}
+
+/// Simulate traffic to QuestDB over ILP/HTTP.
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct CommandArgs {
-    /// Hostname of the QuestDB server
+    /// Hostname of the QuestDB server.
     #[clap(long, default_value = "localhost")]
     host: String,
 
-    /// Port number of the QuestDB server
+    /// Port number of the QuestDB server.
     #[clap(long, default_value = "9000")]
     port: u16,
 
-    /// Name of the table to send data to
+    /// Name of the table to send data to.
+    /// This is a prefix if `table_count` is greater than 1.
     #[clap(long, default_value = "test")]
     table_name: String,
 
-    /// Interval between sending rows
+    /// Interval between sending requests.
     #[clap(long, default_value = "1s")]
     #[arg(value_parser = parse_duration)]
     send_interval: Duration,
 
-    /// Number of rows per HTTP request
+    /// Number of tables to send data to in each request.
+    /// Each table name is `{table_name}_{i}`, unless `table_count` is 1.
+    #[clap(long, default_value_t = 1, value_parser=at_least_one)]
+    table_count: usize,
+
+    /// Number of rows per table per HTTP request.
+    /// I.e. if `table_count` is 2, and `rows_per_request` is 3, then 6 rows will be sent in each request.
     #[clap(long, default_value_t = 1)]
     rows_per_request: usize,
 
-    /// Duration of the test
+    /// Number of symbol columns in each row.
+    #[clap(long, default_value = "10")]
+    symbol_count: usize,
+
+    /// Number of float columns in each row.
+    #[clap(long, default_value = "10")]
+    float_count: usize,
+
+    /// Duration of the test. E.g. `10s`, `5m`, `1h`, `2h30m`, etc.
     #[clap(long, default_value = "10m")]
     #[arg(value_parser = parse_duration)]
     test_duration: Duration,
@@ -57,9 +80,15 @@ fn main() -> anyhow::Result<()> {
             std::thread::sleep(to_sleep);
         }
         last_sent = Instant::now();
-        for _ in 0..args.rows_per_request {
-            write_row(&args, &mut buffer)?;
+
+        if args.table_count == 1 {
+            write_row(&args.table_name, &args, &mut buffer)?;
+        } else {
+            for i in 0..args.table_count {
+                write_row(&format!("{}_{}", args.table_name, i), &args, &mut buffer)?;
+            }
         }
+
         sender.flush(&mut buffer)?;
         eprint!(".");
 
@@ -70,38 +99,14 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn write_row(args: &CommandArgs, buffer: &mut Buffer) -> anyhow::Result<()> {
-    buffer.table(&args.table_name)?
-        .symbol("sym0", "sym0")?
-        .symbol("sym1", "sym1")?
-        .symbol("sym2", "sym2")?
-        .symbol("sym3", "sym3")?
-        .symbol("sym4", "sym4")?
-        .symbol("sym5", "sym5")?
-        .symbol("sym6", "sym6")?
-        .symbol("sym7", "sym7")?
-        .symbol("sym8", "sym8")?
-        .symbol("sym9", "sym9")?
-        .column_f64("f0", 0.0)?
-        .column_f64("f1", 1.0)?
-        .column_f64("f2", 2.0)?
-        .column_f64("f3", 3.0)?
-        .column_f64("f4", 4.0)?
-        .column_f64("f5", 5.0)?
-        .column_f64("f6", 6.0)?
-        .column_f64("f7", 7.0)?
-        .column_f64("f8", 8.0)?
-        .column_f64("f9", 9.0)?
-        .column_i64("i0", 0)?
-        .column_i64("i1", 1)?
-        .column_i64("i2", 2)?
-        .column_i64("i3", 3)?
-        .column_i64("i4", 4)?
-        .column_i64("i5", 5)?
-        .column_i64("i6", 6)?
-        .column_i64("i7", 7)?
-        .column_i64("i8", 8)?
-        .column_i64("i9", 9)?
-        .at(TimestampNanos::now())?;
+fn write_row(table: &str, args: &CommandArgs, buffer: &mut Buffer) -> anyhow::Result<()> {
+    buffer.table(table)?;
+    for i in 0..args.symbol_count {
+        buffer.symbol(format!("sym{}", i).as_str(), format!("sym{}", i))?;
+    }
+    for i in 0..args.float_count {
+        buffer.column_f64(format!("f{}", i).as_str(), i as f64)?;
+    }
+    buffer.at(TimestampNanos::now())?;
     Ok(())
 }
