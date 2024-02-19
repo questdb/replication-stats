@@ -100,13 +100,15 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn write_row(table: &str, args: &CommandArgs, buffer: &mut Buffer) -> anyhow::Result<()> {
-    buffer.table(table)?;
-    for i in 0..args.symbol_count {
-        buffer.symbol(format!("sym{}", i).as_str(), format!("sym{}", i))?;
+    for r in 0..args.rows_per_request {
+        buffer.table(table)?;
+        for i in 0..args.symbol_count {
+            buffer.symbol(format!("sym{}", i).as_str(), format!("sym{}", i))?;
+        }
+        for i in 0..args.float_count {
+            buffer.column_f64(format!("f{}", i).as_str(), i as f64)?;
+        }
+        buffer.at(TimestampNanos::now())?;
     }
-    for i in 0..args.float_count {
-        buffer.column_f64(format!("f{}", i).as_str(), i as f64)?;
-    }
-    buffer.at(TimestampNanos::now())?;
     Ok(())
 }
