@@ -4,7 +4,7 @@ mod writer;
 use crate::literal_bytes::LiteralBytes;
 use crate::writer::Record;
 use etherparse::{InternetSlice, SlicedPacket, TcpHeaderSlice, TransportSlice};
-use pcap::{Capture, Device, Packet};
+use pcap::{Capture, Device, Linktype, Packet};
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::net::Ipv4Addr;
@@ -126,12 +126,22 @@ fn to_system_time(ts: libc::timeval) -> SystemTime {
     UNIX_EPOCH + std::time::Duration::new(ts.tv_sec as u64, ts.tv_usec as u32 * 1000)
 }
 
-fn parse_tcp(packet: &Packet) -> anyhow::Result<Option<TcpData>> {
-    // Note that we're parsing on LINKTYPE_NULL, i.e. loopback, not ethernet.
+fn skip_ethernet_header(data: &[u8]) -> anyhow::Result<&[u8]> {
+    if data.len() < 14 {
+        return Err(anyhow::anyhow!("Packet too short"));
+    }
+    Ok(&data[14..])
+}
+
+fn parse_tcp(packet: &Packet, link_type: Linktype) -> anyhow::Result<Option<TcpData>> {
     if packet.header.caplen < 32 {
         return Ok(None);
     }
-    let ipv4data = &packet.data[4..]; // skip the loopback header
+    let ipv4data = match link_type {
+        Linktype::NULL => &packet.data[4..],
+        Linktype::ETHERNET => skip_ethernet_header(&packet.data)?,
+        _ => return Err(anyhow::anyhow!("Unsupported link type: {:?}", link_type)),
+    };
     let sliced = SlicedPacket::from_ip(ipv4data)?;
     let Some(InternetSlice::Ipv4(ipv4slice, _)) = sliced.ip else {
         return Ok(None);
@@ -214,11 +224,12 @@ fn main() -> anyhow::Result<()> {
         .buffer_size(4 * 1024 * 1024)
         .open()?;
     cap.filter("tcp", true)?;
+    let link_type = cap.get_datalink();
     loop {
         let Some(packet) = ignore_timeouts(cap.next_packet())? else {
             continue;
         };
-        let Some(tcp_data) = parse_tcp(&packet)? else {
+        let Some(tcp_data) = parse_tcp(&packet, link_type)? else {
             continue;
         };
         let data_len = packet.header.len as u64 - tcp_data.data_offset as u64;
