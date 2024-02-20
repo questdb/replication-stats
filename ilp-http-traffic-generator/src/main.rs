@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use questdb::ingress::{SenderBuilder, Buffer, TimestampNanos};
+use questdb::ingress::{SenderBuilder, CertificateAuthority, Tls, Buffer, TimestampNanos};
 
 use clap::Parser;
 
@@ -63,14 +63,37 @@ struct CommandArgs {
     #[clap(long, default_value = "10m")]
     #[arg(value_parser = parse_duration)]
     test_duration: Duration,
+
+    /// Basic auth user.
+    /// It will be used unless oauth-token is set.
+    #[clap(long, default_value = "admin")]
+    basic_auth_user: String,
+
+    /// Basic auth password.
+    /// It will be used unless oauth-token is set.
+    #[clap(long, default_value = "quest")]
+    basic_auth_password: String,
+
+    /// Oauth token.
+    /// If this is set, no basic auth info will be sent.
+    #[clap(long)]
+    oauth_token: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = CommandArgs::parse();
-    let mut sender = SenderBuilder::new("localhost", 9000)
-        .http()
-        .basic_auth("admin", "quest")
+    let mut builder = SenderBuilder::new(&args.host, args.port.clone()).http();
+
+    if let Some(token) = args.oauth_token.as_deref() {
+        builder = builder.token_auth(token);
+    } else {
+        builder = builder.basic_auth(&args.basic_auth_user, &args.basic_auth_password);
+    }
+
+    let mut sender = builder.
+        tls(Tls::Enabled(CertificateAuthority::WebpkiRoots))
         .connect()?;
+
     let mut buffer = Buffer::new();
     let begin = Instant::now();
     let mut last_sent = Instant::now() - (2 * args.send_interval);
@@ -100,7 +123,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn write_row(table: &str, args: &CommandArgs, buffer: &mut Buffer) -> anyhow::Result<()> {
-    for r in 0..args.rows_per_request {
+    for _r in 0..args.rows_per_request {
         buffer.table(table)?;
         for i in 0..args.symbol_count {
             buffer.symbol(format!("sym{}", i).as_str(), format!("sym{}", i))?;
