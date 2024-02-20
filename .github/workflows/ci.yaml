@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+
+    # ilp-http-traffic-generator checks
+    - name: Build - ilp-http-traffic-generator
+      working-directory: ./ilp-http-traffic-generator
+      run: cargo build --verbose
+    - name: Format Check - ilp-http-traffic-generator
+      working-directory: ./ilp-http-traffic-generator
+      run: cargo fmt -- --check
+    - name: Clippy Check - ilp-http-traffic-generator
+      working-directory: ./ilp-http-traffic-generator
+      run: cargo clippy -- -D warnings
+
+    # net-traffic-capture checks
+    - name: Build - net-traffic-capture
+      working-directory: ./net-traffic-capture
+      run: cargo build --verbose
+    - name: Format Check - net-traffic-capture
+      working-directory: ./net-traffic-capture
+      run: cargo fmt -- --check
+    - name: Clippy Check - net-traffic-capture
+      working-directory: ./net-traffic-capture
+      run: cargo clippy -- -D warnings
