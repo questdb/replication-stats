@@ -78,6 +78,10 @@ struct CommandArgs {
     /// If this is set, no basic auth info will be sent.
     #[clap(long)]
     oauth_token: Option<String>,
+
+    /// Enable TLS for the connection.
+    #[clap(long, action = clap::ArgAction::SetTrue)]
+    tls: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -90,9 +94,12 @@ fn main() -> anyhow::Result<()> {
         builder = builder.basic_auth(&args.basic_auth_user, &args.basic_auth_password);
     }
 
-    let mut sender = builder.
-        tls(Tls::Enabled(CertificateAuthority::WebpkiRoots))
-        .connect()?;
+    // Apply TLS configuration based on the tls flag
+    if args.tls {
+        builder = builder.tls(Tls::Enabled(CertificateAuthority::WebpkiRoots));
+    }
+
+    let mut sender = builder.connect()?;
 
     let mut buffer = Buffer::new();
     let begin = Instant::now();
