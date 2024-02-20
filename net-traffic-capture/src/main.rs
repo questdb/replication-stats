@@ -139,7 +139,7 @@ fn parse_tcp(packet: &Packet, link_type: Linktype) -> anyhow::Result<Option<TcpD
     }
     let ipv4data = match link_type {
         Linktype::NULL => &packet.data[4..],
-        Linktype::ETHERNET => skip_ethernet_header(&packet.data)?,
+        Linktype::ETHERNET => skip_ethernet_header(packet.data)?,
         _ => return Err(anyhow::anyhow!("Unsupported link type: {:?}", link_type)),
     };
     let sliced = SlicedPacket::from_ip(ipv4data)?;
