@@ -1,5 +1,5 @@
+use questdb::ingress::{Buffer, CertificateAuthority, SenderBuilder, TimestampNanos, Tls};
 use std::time::{Duration, Instant};
-use questdb::ingress::{SenderBuilder, CertificateAuthority, Tls, Buffer, TimestampNanos};
 
 use clap::Parser;
 
@@ -86,7 +86,7 @@ struct CommandArgs {
 
 fn main() -> anyhow::Result<()> {
     let args = CommandArgs::parse();
-    let mut builder = SenderBuilder::new(&args.host, args.port.clone()).http();
+    let mut builder = SenderBuilder::new(&args.host, args.port).http();
 
     if let Some(token) = args.oauth_token.as_deref() {
         builder = builder.token_auth(token);
