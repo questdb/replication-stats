@@ -3,7 +3,7 @@ use questdb::ingress::{
 };
 use std::time::{Duration, Instant};
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 fn parse_duration(arg: &str) -> anyhow::Result<Duration> {
     let nanos = match go_parse_duration::parse_duration(arg) {
@@ -21,10 +21,21 @@ fn at_least_one(s: &str) -> Result<usize, String> {
     Ok(n)
 }
 
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    Http,
+    Tcp,
+}
+
 /// Simulate traffic to QuestDB over ILP/HTTP.
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct CommandArgs {
+    /// Protocol to use for sending data.
+    #[clap(long, default_value = "http")]
+    #[arg(value_enum)]
+    protocol: Protocol,
+
     /// Hostname of the QuestDB server.
     #[clap(long, default_value = "localhost")]
     host: String,
@@ -81,6 +92,10 @@ struct CommandArgs {
     #[clap(long)]
     oauth_token: Option<String>,
 
+    /// TCP auth, format: `key_id/priv_key/pub_key_x/pub_key_y`
+    #[clap(long)]
+    tcp_auth: Option<String>,
+
     /// Enable TLS for the connection.
     #[clap(long, action = clap::ArgAction::SetTrue)]
     tls: bool,
@@ -123,12 +138,32 @@ fn main() -> anyhow::Result<()> {
         .map(|(i, s)| (ColumnName::new(s.as_str()).unwrap(), i as f64))
         .collect::<Vec<_>>();
 
-    let mut builder = SenderBuilder::new(&args.host, args.port).http();
+    let mut builder = SenderBuilder::new(&args.host, args.port);
 
-    if let Some(token) = args.oauth_token.as_deref() {
-        builder = builder.token_auth(token);
-    } else {
-        builder = builder.basic_auth(&args.basic_auth_user, &args.basic_auth_password);
+    match args.protocol {
+        Protocol::Http => {
+            builder = builder.http();
+            if let Some(token) = args.oauth_token.as_deref() {
+                builder = builder.token_auth(token);
+            } else {
+                builder = builder.basic_auth(&args.basic_auth_user, &args.basic_auth_password);
+            }
+        }
+        Protocol::Tcp => {
+            if let Some(auth) = args.tcp_auth.as_ref() {
+                let parts = auth.split('/').collect::<Vec<_>>();
+                if parts.len() != 4 {
+                    return Err(anyhow::anyhow!(
+                        "Invalid tcp-auth format, must be `key_id/priv_key/pub_key_x/pub_key_y`"
+                    ));
+                }
+                eprintln!(
+                    "Using TCP auth: key_id: {}, priv_key: {}, pub_key_x: {}, pub_key_y: {}",
+                    parts[0], parts[1], parts[2], parts[3]
+                );
+                builder = builder.auth(parts[0], parts[1], parts[2], parts[3]);
+            }
+        }
     }
 
     // Apply TLS configuration based on the tls flag
