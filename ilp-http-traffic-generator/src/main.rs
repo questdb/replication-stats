@@ -1,4 +1,6 @@
-use questdb::ingress::{Buffer, CertificateAuthority, SenderBuilder, TimestampNanos, Tls};
+use questdb::ingress::{
+    Buffer, CertificateAuthority, ColumnName, SenderBuilder, TableName, TimestampNanos, Tls,
+};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -82,10 +84,45 @@ struct CommandArgs {
     /// Enable TLS for the connection.
     #[clap(long, action = clap::ArgAction::SetTrue)]
     tls: bool,
+
+    /// Frequency at which to print stats.
+    /// E.g. if `stats_frequency` is 10, then stats will be printed every 10 requests.
+    #[clap(long, default_value = "10")]
+    stats_frequency: usize,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = CommandArgs::parse();
+
+    let tables = if args.table_count == 1 {
+        vec![args.table_name.clone()]
+    } else {
+        (0..args.table_count)
+            .map(|i| format!("{}_{}", args.table_name, i))
+            .collect()
+    };
+    let tables = tables
+        .iter()
+        .map(|s| TableName::new(s.as_str()).unwrap())
+        .collect::<Vec<_>>();
+
+    let symbols = (0..args.symbol_count)
+        .map(|i| format!("sym{}", i))
+        .collect::<Vec<_>>();
+    let symbols = symbols
+        .iter()
+        .map(|s| (ColumnName::new(s.as_str()).unwrap(), s.as_str()))
+        .collect::<Vec<_>>();
+
+    let floats = (0..args.float_count)
+        .map(|i| format!("float{}", i))
+        .collect::<Vec<_>>();
+    let floats = floats
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (ColumnName::new(s.as_str()).unwrap(), i as f64))
+        .collect::<Vec<_>>();
+
     let mut builder = SenderBuilder::new(&args.host, args.port).http();
 
     if let Some(token) = args.oauth_token.as_deref() {
@@ -101,6 +138,9 @@ fn main() -> anyhow::Result<()> {
 
     let mut sender = builder.connect()?;
 
+    let mut total_sent_rows = 0usize;
+    let mut total_sent_bytes = 0usize;
+    let mut request_index = 0usize;
     let mut buffer = Buffer::new();
     let begin = Instant::now();
     let mut last_sent = Instant::now() - (2 * args.send_interval);
@@ -111,32 +151,56 @@ fn main() -> anyhow::Result<()> {
         }
         last_sent = Instant::now();
 
-        if args.table_count == 1 {
-            write_row(&args.table_name, &args, &mut buffer)?;
-        } else {
-            for i in 0..args.table_count {
-                write_row(&format!("{}_{}", args.table_name, i), &args, &mut buffer)?;
-            }
+        for table in tables.iter() {
+            write_request(
+                &mut buffer,
+                args.rows_per_request,
+                *table,
+                &symbols,
+                &floats,
+            )?;
         }
 
+        total_sent_rows += buffer.row_count();
+        total_sent_bytes += buffer.len();
         sender.flush(&mut buffer)?;
-        eprint!(".");
+
+        if request_index != 0 && request_index % args.stats_frequency == 0 {
+            let tot_elapsed = begin.elapsed();
+            let throughput_rows = total_sent_rows as f64 / tot_elapsed.as_secs_f64();
+            let throughput_bytes = total_sent_bytes as f64 / tot_elapsed.as_secs_f64();
+            eprintln!(
+                "\n[{}] Sent {} rows, {} bytes, {:.2} rows/s, {:.2} bytes/s",
+                request_index, total_sent_rows, total_sent_bytes, throughput_rows, throughput_bytes
+            );
+        }
+        if args.stats_frequency <= 20 {
+            eprint!(".");
+        }
 
         if begin.elapsed() > args.test_duration {
             break;
         }
+
+        request_index += 1;
     }
     Ok(())
 }
 
-fn write_row(table: &str, args: &CommandArgs, buffer: &mut Buffer) -> anyhow::Result<()> {
-    for _r in 0..args.rows_per_request {
+fn write_request(
+    buffer: &mut Buffer,
+    rows_per_request: usize,
+    table: TableName,
+    symbols: &[(ColumnName, &str)],
+    floats: &[(ColumnName, f64)],
+) -> anyhow::Result<()> {
+    for _r in 0..rows_per_request {
         buffer.table(table)?;
-        for i in 0..args.symbol_count {
-            buffer.symbol(format!("sym{}", i).as_str(), format!("sym{}", i))?;
+        for (col_name, sym_value) in symbols {
+            buffer.symbol(*col_name, sym_value)?;
         }
-        for i in 0..args.float_count {
-            buffer.column_f64(format!("f{}", i).as_str(), i as f64)?;
+        for (col_name, float_value) in floats {
+            buffer.column_f64(*col_name, *float_value)?;
         }
         buffer.at(TimestampNanos::now())?;
     }
