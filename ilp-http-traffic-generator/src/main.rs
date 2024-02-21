@@ -27,7 +27,7 @@ enum Protocol {
     Tcp,
 }
 
-/// Simulate traffic to QuestDB over ILP/HTTP.
+/// Simulate traffic to QuestDB over ILP/HTTP or ILP/TCP.
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct CommandArgs {
